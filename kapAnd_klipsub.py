@@ -61,7 +61,7 @@ def load_data_cube(datacube_fname, outer_search_rad):
     cube_hdu.close()
     return cropped_cube
 
-def load_and_clean_data_cube(datacube_fname, outer_search_rad):
+def load_and_clean_data_cube(datacube_fname, outer_search_rad, replace_bad):
     cube_hdu = pyfits.open(datacube_fname, 'readonly')
     N_fr = cube_hdu[0].data.shape[0]
     old_height = cube_hdu[0].data.shape[1]
@@ -128,6 +128,31 @@ def load_and_clean_data_cube(datacube_fname, outer_search_rad):
             #clean_img_hdu.writeto("%s/test_clean_img_step2.fits" % result_dir, clobber=True)
         #img = median_filter(img, size = (2,2))
         clean_cropped_cube[fr_ind,:,:] = img[sci_ybeg:sci_yend, sci_xbeg:sci_xend]
+    #
+    # Replace bad pixels. The hard-coded list, written below, was identified by hand. Coordinates are zero-based x,y pairs.
+    #
+    if replace_bad == True:
+        bad_list = [(177, 56), (179, 44), (179, 45), (209, 56), (201, 76), (202, 76), (201, 77), (202, 76), (202, 77),
+                    (214, 82), (215, 81), (215, 82), (201, 95), (191, 100), (192, 99), (192, 100), (210, 112), (210, 113),
+                    (196, 134), (196, 135), (184, 122), (201, 146), (201, 147), (182, 151), (182, 152),
+                    (181, 97), (182, 97), (182, 98), (216, 126), (217, 126), (216, 127), (217, 127),
+                    (206, 116), (212, 104), (193, 63), (205, 65), (193, 163), (175, 170), (203, 161), (204, 161), (203, 160),
+                    (200, 109), (200, 108), (209, 124), (187, 167), (188, 55), (189, 55), (188, 56), (189, 56),
+                    (216, 126), (217, 126), (216, 127), (217, 127), (210, 79), (211, 79), (192, 46), (193, 46), (200, 77), (200, 78),
+                    (214, 82), (181, 152), (180, 147), (205, 92), (205, 93), (210, 70)]
+        #thresh = 1000.
+        thresh = 800.
+        neighb_reach = 1
+        for fr_ind in range(N_fr):
+            for bad_pix in bad_list:
+                if clean_cropped_cube[fr_ind, bad_pix[1], bad_pix[0]] > thresh:
+                    goodneighb_list = list()
+                    for x in range(bad_pix[0] - neighb_reach, bad_pix[0] + neighb_reach + 1):
+                        for y in range(bad_pix[1] - neighb_reach, bad_pix[1] + neighb_reach + 1):
+                            if x > 0 and x < clean_cropped_cube.shape[2] and \
+                               y > 0 and y < clean_cropped_cube.shape[1] and (x, y) not in bad_list:
+                                goodneighb_list.append( clean_cropped_cube[fr_ind, y, x] )
+                    clean_cropped_cube[fr_ind, bad_pix[1], bad_pix[0]] = np.median( goodneighb_list )
 
     cropped_cube_hdu = pyfits.PrimaryHDU(cropped_cube.astype(np.float32))
     cropped_cube_hdu.writeto("%s/kapAnd_cropped_cube.fits" % result_dir, clobber=True)
@@ -155,15 +180,19 @@ if __name__ == "__main__":
     mean_sub = True
     track_mode = True
     #track_mode = False
-    #R_inner = 50.
-    #R_out = [80., 110.]
-    R_inner = 80.
+    R_inner = 85.
+    #R_inner = 20.
+    #R_out = [60., 80.]
     R_out = [110.]
+    #mode_cut = [10, 10]
     mode_cut = [10]
     DPhi = [30.]
+    ##DPhi = [20.]
     Phi_0 = [328.]
     #DPhi = [72.]
     #Phi_0 = [-6.]
+    #DPhi = [360., 360.]
+    #Phi_0 = [0., 0.]
     N_rad = len(R_out)
     fwhm = 11.
     min_refgap_fac = 1.5
@@ -180,7 +209,8 @@ if __name__ == "__main__":
     #cube_fname = "%s/cube_fakeplanets_Neil.fits" % data_dir 
     parang_fname = "%s/parang_Beth.fits" % data_dir
     #Data_cube = load_data_cube(cube_fname, R_out[-1])
-    Data_cube = load_and_clean_data_cube(cube_fname, R_out[-1])
+    #Data_cube = load_and_clean_data_cube(cube_fname, R_out[-1], replace_bad = False)
+    Data_cube = load_and_clean_data_cube(cube_fname, R_out[-1], replace_bad = True)
     parang_hdu = pyfits.open(parang_fname, 'readonly')
     parang_seq = parang_hdu[0].data.copy()
     parang_hdu.close()
@@ -195,10 +225,13 @@ if __name__ == "__main__":
     #
     # Set additional program parameters
     #
-    #store_results = True
-    store_results = False
+    store_results = True
+    #store_results = False
+    store_archv = True
+    #store_archv = False
     diagnos_stride = 12
     op_fr = np.arange(N_fr)
+    #op_fr = np.arange(43,87)
     op_rad = range(N_rad)
     N_op_fr = op_fr.shape[0]
     #op_az = [range(N_az[i]) for i in range(N_rad)]
@@ -280,7 +313,7 @@ if __name__ == "__main__":
     klip_config = {'fr_shape':fr_shape, 'parang_seq':parang_seq, 'mode_cut':mode_cut,\
                    'track_mode':track_mode, 'op_fr':op_fr, 'op_rad':op_rad, 'op_az':op_az,\
                    'ref_table':ref_table, 'zonemask_table_1d':zonemask_table_1d, 'zonemask_table_2d':zonemask_table_2d}
-    klip_data = [[[dict.fromkeys(['I', 'I_mean', 'Z', 'sv', 'Projmat', 'I_proj', 'F']) for a in range(N_az[r])] for r in range(N_rad)] for i in range(N_op_fr)]
+    klip_data = [[[dict.fromkeys(['I', 'I_mean', 'Z', 'sv', 'Projmat', 'I_proj', 'F']) for a in range(N_az[r])] for r in range(N_rad)] for i in range(N_fr)]
     start_time = time.time()
     for i, fr_ind in enumerate(op_fr):
         # Loop over operand frames
@@ -314,13 +347,14 @@ if __name__ == "__main__":
                 I_proj = np.dot(I, Projmat)
                 F = I - I_proj
                 klipsub_cube[i,:,:] += reconst_zone(F, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
-                klip_data[i][rad_ind][az_ind]['I'] = I
-                klip_data[i][rad_ind][az_ind]['I_mean'] = I_mean
-                klip_data[i][rad_ind][az_ind]['Z'] = Z
-                klip_data[i][rad_ind][az_ind]['sv'] = sv
-                #klip_data[i][rad_ind][az_ind]['Projmat'] = Projmat
-                klip_data[i][rad_ind][az_ind]['I_proj'] = I_proj
-                klip_data[i][rad_ind][az_ind]['F'] = F
+                if store_archv:
+                    klip_data[fr_ind][rad_ind][az_ind]['I'] = I
+                    klip_data[fr_ind][rad_ind][az_ind]['I_mean'] = I_mean
+                    klip_data[fr_ind][rad_ind][az_ind]['Z'] = Z
+                    klip_data[fr_ind][rad_ind][az_ind]['sv'] = sv
+                    #klip_data[fr_ind][rad_ind][az_ind]['Projmat'] = Projmat
+                    klip_data[fr_ind][rad_ind][az_ind]['I_proj'] = I_proj
+                    klip_data[fr_ind][rad_ind][az_ind]['F'] = F
                 if fr_ind % diagnos_stride == 0:
                     klbasis_cube += reconst_zone_cube(Z, zonemask_table_2d[fr_ind][rad_ind][az_ind], klbasis_cube.shape)
                     if mean_sub == False:
@@ -404,11 +438,10 @@ if __name__ == "__main__":
 
     if store_results == True:
         delimiter = '_'
-        label_str = "cut%s_Naz%s" % (delimiter.join(["%02d" % m for m in mode_cut]), delimiter.join(["%02d" % n for n in N_az]))
+        label_str = "cut%s_delPhi%s" % (delimiter.join(["%02d" % m for m in mode_cut]), delimiter.join(["%02d" % dphi for dphi in DPhi]))
         klipsub_cube_fname = "%s/kapAnd_%s_klipsub_cube.fits" % (result_dir, label_str)
         derot_klipsub_cube_fname = "%s/kapAnd_%s_derot_klipsub_cube.fits" % (result_dir, label_str)
         coadd_img_fname = "%s/kapAnd_%s_coadd.fits" % (result_dir, label_str)
-        coadd_img_fname = "%s/kapAnd_%s_med.fits" % (result_dir, label_str)
         med_img_fname = "%s/kapAnd_%s_med.fits" % (result_dir, label_str)
         klipsub_archv_fname = "%s/kapAnd_%s_klipsub_archive.shelve" % (result_dir, label_str)
 
@@ -420,14 +453,15 @@ if __name__ == "__main__":
         print "Wrote derotated, KLIP-subtracted image cube (%.3f Mb) to %s" % (derot_klipsub_cube.nbytes/10.**6, derot_klipsub_cube_fname)
         coadd_img_hdu = pyfits.PrimaryHDU(coadd_img.astype(np.float32))
         coadd_img_hdu.writeto(coadd_img_fname, clobber=True)
-        print "Wrote final coadded, derotated, KLIP-subtracted image (%.3f Mb) to %s" % (coadd_img.nbytes/10.**6, coadd_img_fname)
+        print "Wrote average of derotated, KLIP-subtracted images (%.3f Mb) to %s" % (coadd_img.nbytes/10.**6, coadd_img_fname)
         med_img_hdu = pyfits.PrimaryHDU(med_img.astype(np.float32))
         med_img_hdu.writeto(med_img_fname, clobber=True)
         print "Wrote median of derotated, KLIP-subtracted images (%.3f Mb) to %s" % (med_img.nbytes/10.**6, med_img_fname)
         if os.path.exists(klipsub_archv_fname):
-             os.remove(klipsub_archv_fname)
-        klipsub_archv = shelve.open(klipsub_archv_fname)
-        klipsub_archv['klip_config'] = klip_config
-        klipsub_archv['klip_data'] = klip_data
-        klipsub_archv.close()
-        print "Wrote KLIP reduction (%.3f Mb) archive to %s" % (os.stat(klipsub_archv_fname).st_size/10.**6, klipsub_archv_fname)
+            os.remove(klipsub_archv_fname)
+        if store_archv:
+            klipsub_archv = shelve.open(klipsub_archv_fname)
+            klipsub_archv['klip_config'] = klip_config
+            klipsub_archv['klip_data'] = klip_data
+            klipsub_archv.close()
+            print "Wrote KLIP reduction (%.3f Mb) archive to %s" % (os.stat(klipsub_archv_fname).st_size/10.**6, klipsub_archv_fname)

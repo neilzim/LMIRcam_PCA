@@ -62,8 +62,9 @@ def reconst_zone(data_vec, pix_table, img_dim):
         reconstrd_img[row, col] = pix_val
     return reconstrd_img
 
-def mp_eval_adiklip_srcmodel(p, N_proc, adiklip_config, adiklip_data, srcmodel):
-    op_fr = adiklip_config['op_fr']
+def mp_eval_adiklip_srcmodel(p, N_proc, op_fr, adiklip_config, adiklip_data, srcmodel):
+    if op_fr == None:
+        op_fr = adiklip_config['op_fr']
     N_op_fr = len(op_fr)
     cost_queue = Queue()
     total_sumofsq_cost = 0
@@ -88,10 +89,10 @@ def mp_eval_adiklip_srcmodel(p, N_proc, adiklip_config, adiklip_data, srcmodel):
 
     return total_sumofsq_cost
 
-def lnprob_adiklip_srcmodel(p, N_proc, adiklip_config, adiklip_data, srcmodel):
+def lnprob_adiklip_srcmodel(p, N_proc, op_fr, adiklip_config, adiklip_data, srcmodel):
     img_shape = adiklip_config['fr_shape']
     if abs(p[1]) < (img_shape[1] - 1.)/2. and abs(p[2]) < (img_shape[0] - 1)/2.:
-        cost = mp_eval_adiklip_srcmodel(p = p, N_proc = N_proc, adiklip_config = adiklip_config,
+        cost = mp_eval_adiklip_srcmodel(p = p, N_proc = N_proc, op_fr = op_fr, adiklip_config = adiklip_config,
                                         adiklip_data = adiklip_data, srcmodel = srcmodel)
         lnprob = -cost/2.
     else:
@@ -109,6 +110,7 @@ def eval_adiklip_srcmodel(p, op_fr, adiklip_config, adiklip_data, srcmodel, cost
     zonemask_table_1d = adiklip_config['zonemask_table_1d']
     zonemask_table_2d = adiklip_config['zonemask_table_2d']
     N_op_fr = len(op_fr)
+    N_fr = len(parang_seq)
 
     cent_xy = ((fr_shape[1] - 1)/2., (fr_shape[0] - 1)/2.)
     srcmodel_cent_xy = ((srcmodel.shape[1] - 1)/2., (srcmodel.shape[0] - 1)/2.)
@@ -123,47 +125,54 @@ def eval_adiklip_srcmodel(p, op_fr, adiklip_config, adiklip_data, srcmodel, cost
     abframe_synthsrc_cube = np.zeros((N_op_fr, fr_shape[0], fr_shape[1]))
     sumofsq_cost = 0.
     if res_cube_fname:
-        res_cube = np.zeros((N_op_fr, fr_shape[0], fr_shape[1]))
+        if os.path.exists(res_cube_fname) == False:
+            res_cube = np.zeros((N_fr, fr_shape[0], fr_shape[1]))
+            res_cube_hdu = pyfits.PrimaryHDU(res_cube.astype(np.float32))
+            res_cube_hdu.writeto(res_cube_fname)
+        res_cube_hdulist = pyfits.open(res_cube_fname, mode='update')
+        res_cube = res_cube_hdulist[0].data
     for op_fr_ind, fr_ind in enumerate(op_fr):
         if abframe_xy_seq[op_fr_ind][0] >= fr_shape[1] or abframe_xy_seq[op_fr_ind][1] >= fr_shape[0] or min(abframe_xy_seq[op_fr_ind]) < 0:
             print 'bad dest:', abframe_xy_seq[op_fr_ind]
             print 'p:', p[0:3]
+            return np.finfo(np.float).max 
         abframe_synthsrc_cube[op_fr_ind,:,:] = superpose_srcmodel(data_img = np.zeros(fr_shape), srcmodel_img = amp*srcmodel,
                                                                   srcmodel_destxy = abframe_xy_seq[op_fr_ind], srcmodel_centxy = srcmodel_cent_xy)
         for rad_ind in op_rad:
             for az_ind in op_az[rad_ind]:
                 Pmod = np.ravel(abframe_synthsrc_cube[op_fr_ind,:,:])[ zonemask_table_1d[fr_ind][rad_ind][az_ind] ].copy()
-                #Projmat = klip_data[fr_ind][rad_ind][az_ind]['Projmat']
-                Z = klip_data[fr_ind][rad_ind][az_ind]['Z'][:5,:]
+                Pmod -= np.mean(Pmod)
+                Z = klip_data[fr_ind][rad_ind][az_ind]['Z'][:,:]
                 Projmat = np.dot(Z.T, Z)
                 F = klip_data[fr_ind][rad_ind][az_ind]['F']
                 Pmod_proj = np.dot(Pmod, Projmat)
                 res_vec = F - Pmod + Pmod_proj
                 sumofsq_cost += np.sum(res_vec**2)
                 if res_cube_fname:
-                    res_cube[op_fr_ind,:,:] += reconst_zone(res_vec, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
+                    res_cube[fr_ind,:,:] += reconst_zone(res_vec, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
                     #print "rms(Pmod) = %.1f, rms(Pmod_proj) = %.1f" %\
                     #      (np.sqrt(np.sum(Pmod**2)), np.sqrt(np.sum(Pmod_proj**2)))
     if cost_queue:
         cost_queue.put(sumofsq_cost)
     if res_cube_fname:
-        res_cube_hdu = pyfits.PrimaryHDU(res_cube.astype(np.float32))
-        res_cube_hdu.writeto(res_cube_fname, clobber=True)
-        print "Wrote model residual cube to %s" % res_cube_fname
+        res_cube_hdulist.close()
     return sumofsq_cost
 
 if __name__ == "__main__":
     data_dir = os.path.expanduser('~/Data/LMIRcam/kappaAnd')
     klipsub_result_dir = os.path.expanduser('~/Data/LMIRcam/kappaAnd/klipsub_results')
     klipmod_result_dir = os.path.expanduser('~/Data/LMIRcam/kappaAnd/klipmod_results')
-    #klipsub_archv_fname = "%s/kapAnd_cut10_Naz12_klipsub_archive.shelve" % klipsub_result_dir
-    klipsub_archv_fname = "%s/kapAnd_cut10_Naz05_klipsub_archive.shelve" % klipsub_result_dir
+    #klipsub_archv_fname = "%s/kapAnd_cut10_delPhi30_klipsub_archive.shelve" % klipsub_result_dir
+    klipsub_archv_fname = "%s/kapAnd_cut10_delPhi20_klipsub_archive.shelve" % klipsub_result_dir
+    #klipsub_archv_fname = "%s/kapAnd_cut05_delPhi30_klipsub_archive.shelve" % klipsub_result_dir
     synthpsf_fname = '%s/psf_model.fits' % data_dir
     guess_res_cube_fname = '%s/guess_res_cube.fits' % klipmod_result_dir
     final_res_cube_fname = '%s/final_res_cube.fits' % klipmod_result_dir
+    fbf_res_cube_fname = '%s/fbf_res_cube.fits' % klipmod_result_dir
 
     do_MLE = True
-    do_MCMC = True
+    do_frbyfr_MLE = True
+    do_MCMC = False
 
     assert os.path.exists(klipsub_result_dir)
     assert os.path.exists(klipmod_result_dir)
@@ -179,6 +188,7 @@ if __name__ == "__main__":
     parang_seq = klip_config['parang_seq']
     mode_cut = klip_config['mode_cut']
     op_fr = klip_config['op_fr']
+    #op_fr = np.arange(43,87)
     op_rad = klip_config['op_rad']
     op_az = klip_config['op_az']
     ref_table = klip_config['ref_table']
@@ -208,17 +218,14 @@ if __name__ == "__main__":
     ampguess = 600.
     posguess_rho = 97.4
     posguess_theta = 55.6 # CCW of N (up in derotated image)
-    #ampguess = 100.
     #posguess_rho = 100.
     #posguess_theta = 60. # CCW of N (up in derotated image)
     posguess_xy = ( cent_xy[0] + posguess_rho*np.cos(np.deg2rad(posguess_theta + 90)),\
                        cent_xy[1] + posguess_rho*np.sin(np.deg2rad(posguess_theta + 90)) )
     posguess_deltaxy = (posguess_xy[0] - cent_xy[0], posguess_xy[1] - cent_xy[1])
     p0 = np.array([ampguess, posguess_deltaxy[0], posguess_deltaxy[1]])
-    #p_min = [ampguess*0.8, posguess_deltaxy[0] - 2., posguess_deltaxy[1] - 2.]
-    #p_max = [ampguess*1.2, posguess_deltaxy[0] + 2., posguess_deltaxy[1] + 2.]
-    p_min = [ampguess*0.1, posguess_deltaxy[0] - 15., posguess_deltaxy[1] - 15.]
-    p_max = [ampguess*10., posguess_deltaxy[0] + 15., posguess_deltaxy[1] + 15.]
+    p_min = [ampguess*0.1, posguess_deltaxy[0] - 5., posguess_deltaxy[1] - 5.]
+    p_max = [ampguess*10., posguess_deltaxy[0] + 5., posguess_deltaxy[1] + 5.]
     p_bounds = [(p_min[i], p_max[i]) for i in range(len(p_min))]
     print "p0:", p0
 
@@ -226,7 +233,7 @@ if __name__ == "__main__":
     start_time = time.time()
     #guess_cost = eval_adiklip_srcmodel(p = p0, op_fr = op_fr, adiklip_config = klip_config, adiklip_data = klip_data,\
     #                                   srcmodel = synthpsf_img, res_cube_fname=guess_res_cube_fname)
-    guess_cost = mp_eval_adiklip_srcmodel(p = p0, N_proc = N_proc, adiklip_config = klip_config,
+    guess_cost = mp_eval_adiklip_srcmodel(p = p0, N_proc = N_proc, op_fr = None, adiklip_config = klip_config,
                                           adiklip_data = klip_data, srcmodel = crop_synthpsf_img)
     end_time = time.time()
     exec_time = end_time - start_time
@@ -242,7 +249,7 @@ if __name__ == "__main__":
         #                                        args = (op_fr, klip_config, klip_data, synthpsf_img),
         #                                        approx_grad = True, bounds = p_bounds, factr=1e8, maxfun=100, disp=2)
         p_sol, final_cost, info = fmin_l_bfgs_b(func = mp_eval_adiklip_srcmodel, x0 = p0,
-                                                args = (N_proc, klip_config, klip_data, crop_synthpsf_img),
+                                                args = (N_proc, op_fr, klip_config, klip_data, crop_synthpsf_img),
                                                 approx_grad = True, bounds = p_bounds, factr=1e8, maxfun=100, disp=2)
         end_time = time.time()
         exec_time = end_time - start_time
@@ -252,7 +259,26 @@ if __name__ == "__main__":
               (int(exec_time/60.), exec_time - 60*int(exec_time/60.), N_op_fr)
 
         eval_adiklip_srcmodel(p = p_sol, op_fr = op_fr, adiklip_config = klip_config, adiklip_data = klip_data,\
-                              srcmodel = crop_synthpsf_img, res_cube_fname=final_res_cube_fname)
+                              srcmodel = crop_synthpsf_img, res_cube_fname = final_res_cube_fname)
+        if do_frbyfr_MLE:
+            #
+            # Find the MLE flux and position solution for each individual ADI frame
+            #
+            print "Doing frame-by-frame MLE of source model..."
+            fbf_flux_sol = list()
+            p_min_fbf = [p_sol[0]*0.5, p_sol[1] - 5., p_sol[2] - 5.]
+            p_max_fbf = [p_sol[0]*2.,  p_sol[1] + 5., p_sol[2] + 5.]
+            p_bounds_fbf = [(p_min_fbf[i], p_max_fbf[i]) for i in range(len(p_min_fbf))]
+            for f in op_fr:
+                p_sol_fbf, final_cost_fbf, info = fmin_l_bfgs_b(func = mp_eval_adiklip_srcmodel, x0 = p_sol,
+                                                                args = (N_proc, np.array([f]), klip_config, klip_data, crop_synthpsf_img),
+                                                                approx_grad = True, bounds = p_bounds, factr=1e8, maxfun=100, disp=0)
+                fbf_flux_sol.append(p_sol_fbf[0])
+                #print "\tFrame %d: peak flux %0.2f" % (f, p_sol_fbf[0])
+                eval_adiklip_srcmodel(p = p_sol_fbf, op_fr = np.array([f]), adiklip_config = klip_config, adiklip_data = klip_data,\
+                                      srcmodel = crop_synthpsf_img, res_cube_fname = fbf_res_cube_fname)
+            print "Wrote model residual cube to %s" % fbf_res_cube_fname
+            print "mean, median, and std dev of frame-by-frame flux solution:", np.mean(fbf_flux_sol), np.median(fbf_flux_sol), np.std(fbf_flux_sol)
 
     if do_MCMC:
         #
@@ -275,7 +301,7 @@ if __name__ == "__main__":
                                                p0[1] + 2 * (0.5 - np.random.rand(N_walkers)),
                                                p0[2] + 2 * (0.5 - np.random.rand(N_walkers)) )) )
         sampler = emcee.EnsembleSampler(N_walkers, N_dim, lnprob_adiklip_srcmodel,
-                                        args=[N_proc, klip_config, klip_data, crop_synthpsf_img])
+                                        args=[N_proc, op_fr, klip_config, klip_data, crop_synthpsf_img])
         pos, prob, state = sampler.run_mcmc(p_init, N_burn)
         sampler.reset()
         sampler.run_mcmc(pos, N_iter)

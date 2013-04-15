@@ -235,8 +235,8 @@ if __name__ == "__main__":
     #
     store_results = True
     #store_results = False
-    #store_archv = True
-    store_archv = False
+    store_archv = True
+    #store_archv = False
     diagnos_stride = 12
     op_fr = np.arange(N_fr)
     op_rad = range(N_rad)

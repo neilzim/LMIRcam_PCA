@@ -162,9 +162,9 @@ if __name__ == "__main__":
     data_dir = os.path.expanduser('~/Data/LMIRcam/kappaAnd')
     klipsub_result_dir = os.path.expanduser('~/Data/LMIRcam/kappaAnd/klipsub_results')
     klipmod_result_dir = os.path.expanduser('~/Data/LMIRcam/kappaAnd/klipmod_results')
-    #klipsub_archv_fname = "%s/kapAnd_cut10_delPhi30_klipsub_archive.shelve" % klipsub_result_dir
+    klipsub_archv_fname = "%s/kapAnd_cut10_delPhi30_klipsub_archive.shelve" % klipsub_result_dir
     #klipsub_archv_fname = "%s/kapAnd_cut10_delPhi20_klipsub_archive.shelve" % klipsub_result_dir
-    klipsub_archv_fname = "%s/kapAnd_cut05_delPhi30_klipsub_archive.shelve" % klipsub_result_dir
+    #klipsub_archv_fname = "%s/kapAnd_cut05_delPhi30_klipsub_archive.shelve" % klipsub_result_dir
     synthpsf_fname = '%s/psf_model.fits' % data_dir
     guess_res_cube_fname = '%s/guess_res_cube.fits' % klipmod_result_dir
     final_res_cube_fname = '%s/final_res_cube.fits' % klipmod_result_dir

@@ -178,21 +178,29 @@ if __name__ == "__main__":
     #
     klip_mode = True 
     mean_sub = True
+
+    #
+    # point PCA
+    #
     track_mode = True
-    #track_mode = False
+    mode_cut = [10]
     R_inner = 85.
+    R_out = [110.]
+    DPhi = [30.]
+    #DPhi = [20.]
+    #DPhi = [72.]
+    Phi_0 = [328.]
+    #Phi_0 = [-6.]
+    #
+    # global PCA
+    #
+    #track_mode = False
+    #mode_cut = [10, 10]
     #R_inner = 20.
     #R_out = [60., 80.]
-    R_out = [110.]
-    #mode_cut = [10, 10]
-    mode_cut = [10]
-    DPhi = [30.]
-    ##DPhi = [20.]
-    Phi_0 = [328.]
-    #DPhi = [72.]
-    #Phi_0 = [-6.]
     #DPhi = [360., 360.]
     #Phi_0 = [0., 0.]
+
     N_rad = len(R_out)
     fwhm = 11.
     min_refgap_fac = 1.5
@@ -227,11 +235,10 @@ if __name__ == "__main__":
     #
     store_results = True
     #store_results = False
-    store_archv = True
-    #store_archv = False
+    #store_archv = True
+    store_archv = False
     diagnos_stride = 12
     op_fr = np.arange(N_fr)
-    #op_fr = np.arange(43,87)
     op_rad = range(N_rad)
     N_op_fr = op_fr.shape[0]
     #op_az = [range(N_az[i]) for i in range(N_rad)]

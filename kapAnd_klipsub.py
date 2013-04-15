@@ -182,24 +182,24 @@ if __name__ == "__main__":
     #
     # point PCA
     #
-    track_mode = True
-    mode_cut = [10]
-    R_inner = 85.
-    R_out = [110.]
-    DPhi = [30.]
-    #DPhi = [20.]
-    #DPhi = [72.]
-    Phi_0 = [328.]
+    #track_mode = True
+    #mode_cut = [10]
+    #R_inner = 85.
+    #R_out = [110.]
+    #DPhi = [30.]
+    ##DPhi = [20.]
+    ##DPhi = [72.]
+    #Phi_0 = [328.]
     #Phi_0 = [-6.]
     #
     # global PCA
     #
-    #track_mode = False
-    #mode_cut = [10, 10]
-    #R_inner = 20.
-    #R_out = [60., 80.]
-    #DPhi = [360., 360.]
-    #Phi_0 = [0., 0.]
+    track_mode = False
+    mode_cut = [10, 10]
+    R_inner = 20.
+    R_out = [60., 80.]
+    DPhi = [360., 360.]
+    Phi_0 = [0., 0.]
 
     N_rad = len(R_out)
     fwhm = 11.
@@ -217,8 +217,8 @@ if __name__ == "__main__":
     #cube_fname = "%s/cube_fakeplanets_Neil.fits" % data_dir 
     parang_fname = "%s/parang_Beth.fits" % data_dir
     #Data_cube = load_data_cube(cube_fname, R_out[-1])
-    #Data_cube = load_and_clean_data_cube(cube_fname, R_out[-1], replace_bad = False)
-    Data_cube = load_and_clean_data_cube(cube_fname, R_out[-1], replace_bad = True)
+    Data_cube = load_and_clean_data_cube(cube_fname, R_out[-1], replace_bad = False)
+    #Data_cube = load_and_clean_data_cube(cube_fname, R_out[-1], replace_bad = True)
     parang_hdu = pyfits.open(parang_fname, 'readonly')
     parang_seq = parang_hdu[0].data.copy()
     parang_hdu.close()
@@ -241,9 +241,9 @@ if __name__ == "__main__":
     op_fr = np.arange(N_fr)
     op_rad = range(N_rad)
     N_op_fr = op_fr.shape[0]
-    #op_az = [range(N_az[i]) for i in range(N_rad)]
+    op_az = [range(N_az[i]) for i in range(N_rad)]
     #op_az = [[0, 6]]
-    op_az = [[0]]
+    #op_az = [[0]]
     #op_fr = np.array([12])
     #op_fr = np.arange(0, N_fr, diagnos_stride)
     assert(len(op_rad) == len(op_az) == N_rad)

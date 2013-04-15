@@ -195,15 +195,20 @@ if __name__ == "__main__":
     # global PCA
     #
     track_mode = False
-    mode_cut = [10, 10]
-    R_inner = 20.
-    R_out = [60., 80.]
-    DPhi = [360., 360.]
-    Phi_0 = [0., 0.]
+    #mode_cut = [10, 10]
+    mode_cut = [10]
+    R_inner = 3.
+    #R_out = [60., 80.]
+    R_out = [70.]
+    #DPhi = [360., 360.]
+    DPhi = [360.]
+    #Phi_0 = [0., 0.]
+    Phi_0 = [0.]
 
     N_rad = len(R_out)
     fwhm = 11.
-    min_refgap_fac = 1.5
+    #min_refgap_fac = 1.5
+    min_refgap_fac = 1.0
     assert(len(mode_cut) == N_rad == len(DPhi) == len(Phi_0))
     N_az = [ int(np.ceil(360./DPhi[r])) for r in range(N_rad) ]
     #
@@ -239,13 +244,12 @@ if __name__ == "__main__":
     store_archv = False
     diagnos_stride = 12
     op_fr = np.arange(N_fr)
-    op_rad = range(N_rad)
-    N_op_fr = op_fr.shape[0]
-    op_az = [range(N_az[i]) for i in range(N_rad)]
-    #op_az = [[0, 6]]
-    #op_az = [[0]]
-    #op_fr = np.array([12])
     #op_fr = np.arange(0, N_fr, diagnos_stride)
+    N_op_fr = op_fr.shape[0]
+    op_rad = range(N_rad)
+    op_az = [range(N_az[i]) for i in range(N_rad)]
+    #op_az = [[0]]
+    #op_az = [[0, 6]]
     assert(len(op_rad) == len(op_az) == N_rad)
     #
     # Form a pixel mask for each search zone, and assemble the masks into two tables (1-D and 2-D formats).
@@ -316,6 +320,7 @@ if __name__ == "__main__":
     # Perform zone-by-zone KLIP subtraction on each frame
     #
     klipsub_cube = np.zeros((N_op_fr, fr_shape[0], fr_shape[1]))
+    klippsf_cube = np.zeros((N_op_fr, fr_shape[0], fr_shape[1]))
     derot_klipsub_cube = klipsub_cube.copy()
     klip_config = {'fr_shape':fr_shape, 'parang_seq':parang_seq, 'mode_cut':mode_cut,\
                    'track_mode':track_mode, 'op_fr':op_fr, 'op_rad':op_rad, 'op_az':op_az,\
@@ -354,6 +359,7 @@ if __name__ == "__main__":
                 I_proj = np.dot(I, Projmat)
                 F = I - I_proj
                 klipsub_cube[i,:,:] += reconst_zone(F, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
+                klippsf_cube[i,:,:] += reconst_zone(I_proj + I_mean, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
                 if store_archv:
                     klip_data[fr_ind][rad_ind][az_ind]['I'] = I
                     klip_data[fr_ind][rad_ind][az_ind]['I_mean'] = I_mean
@@ -394,6 +400,8 @@ if __name__ == "__main__":
     #
     coadd_img = np.mean(derot_klipsub_cube, axis=0)
     med_img = np.median(derot_klipsub_cube, axis=0)
+    mean_klippsf_img = np.mean(klippsf_cube, axis=0)
+    med_klippsf_img = np.median(klippsf_cube, axis=0)
     end_time = time.time()
     exec_time = end_time - start_time
     time_per_frame = exec_time/N_op_fr
@@ -415,31 +423,32 @@ if __name__ == "__main__":
         annular_mask = np.nonzero( np.all(annular_mask_logic, axis=0) )[0]
         coadd_annular_rms.append( np.sqrt( np.mean( np.ravel(coadd_img)[annular_mask]**2 ) ) )
         print "\tannulus %d/%d: %.2f in KLIP sub'd, derotated, coadded annlus" % (rad_ind+1, N_rad, coadd_annular_rms[-1])
-        Phi_beg = (Phi_0_derot - DPhi[rad_ind]/2.) % 360.
-        Phi_end = [ (Phi_beg + i * DPhi[rad_ind]) % 360. for i in range(1, N_az[rad_ind]) ]
-        Phi_end.append(Phi_beg)
-        for az_ind in op_az[rad_ind]:
-            Phi2 = Phi_end[az_ind]
-            if az_ind == 0:
-                Phi1 = Phi_beg
-            else:
-                Phi1 = Phi_end[az_ind-1]
-            if Phi1 < Phi2:
-                mask_logic = np.vstack((np.less_equal(rad_vec, R2),\
-                                        np.greater(rad_vec, R1),\
-                                        np.less_equal(angle_vec, Phi2),\
-                                        np.greater(angle_vec, Phi1)))
-            else: # azimuthal region spans phi = 0
-                rad_mask_logic = np.vstack((np.less_equal(rad_vec, R2),\
-                                            np.greater(rad_vec, R1)))
-                az_mask_logic = np.vstack((np.less_equal(angle_vec, Phi2),\
-                                           np.greater(angle_vec, Phi1)))
-                mask_logic = np.vstack((np.any(az_mask_logic, axis=0),\
-                                        np.all(rad_mask_logic, axis=0)))
-            derot_zonemask = np.nonzero( np.all(mask_logic, axis = 0) )[0]
-            zonal_rms[rad_ind][az_ind] = np.sqrt( np.mean( np.ravel(coadd_img)[derot_zonemask]**2 ) )
-        delimiter = ', '
-        print "\tby zone: %s" % delimiter.join(["%.2f" % zonal_rms[rad_ind][a] for a in op_az[rad_ind]])
+        if len(op_az[rad_ind]) > 1:
+            Phi_beg = (Phi_0_derot - DPhi[rad_ind]/2.) % 360.
+            Phi_end = [ (Phi_beg + i * DPhi[rad_ind]) % 360. for i in range(1, N_az[rad_ind]) ]
+            Phi_end.append(Phi_beg)
+            for az_ind in op_az[rad_ind]:
+                Phi2 = Phi_end[az_ind]
+                if az_ind == 0:
+                    Phi1 = Phi_beg
+                else:
+                    Phi1 = Phi_end[az_ind-1]
+                if Phi1 < Phi2:
+                    mask_logic = np.vstack((np.less_equal(rad_vec, R2),\
+                                            np.greater(rad_vec, R1),\
+                                            np.less_equal(angle_vec, Phi2),\
+                                            np.greater(angle_vec, Phi1)))
+                else: # azimuthal region spans phi = 0
+                    rad_mask_logic = np.vstack((np.less_equal(rad_vec, R2),\
+                                                np.greater(rad_vec, R1)))
+                    az_mask_logic = np.vstack((np.less_equal(angle_vec, Phi2),\
+                                               np.greater(angle_vec, Phi1)))
+                    mask_logic = np.vstack((np.any(az_mask_logic, axis=0),\
+                                            np.all(rad_mask_logic, axis=0)))
+                derot_zonemask = np.nonzero( np.all(mask_logic, axis = 0) )[0]
+                zonal_rms[rad_ind][az_ind] = np.sqrt( np.mean( np.ravel(coadd_img)[derot_zonemask]**2 ) )
+            delimiter = ', '
+            print "\tby zone: %s" % delimiter.join(["%.2f" % zonal_rms[rad_ind][a] for a in op_az[rad_ind]])
     print "Peak value in final co-added image: %0.2f" % np.amax(coadd_img)
     print "Peak value in median of de-rotated images: %0.2f" % np.amax(med_img)
 
@@ -447,11 +456,23 @@ if __name__ == "__main__":
         delimiter = '_'
         label_str = "cut%s_delPhi%s" % (delimiter.join(["%02d" % m for m in mode_cut]), delimiter.join(["%02d" % dphi for dphi in DPhi]))
         klipsub_cube_fname = "%s/kapAnd_%s_klipsub_cube.fits" % (result_dir, label_str)
+        klippsf_cube_fname = "%s/kapAnd_%s_klippsf_cube.fits" % (result_dir, label_str)
         derot_klipsub_cube_fname = "%s/kapAnd_%s_derot_klipsub_cube.fits" % (result_dir, label_str)
         coadd_img_fname = "%s/kapAnd_%s_coadd.fits" % (result_dir, label_str)
         med_img_fname = "%s/kapAnd_%s_med.fits" % (result_dir, label_str)
+        mean_klippsf_img_fname = "%s/kapAnd_%s_klippsf_mean.fits" % (result_dir, label_str)
+        med_klippsf_img_fname = "%s/kapAnd_%s_klippsf_med.fits" % (result_dir, label_str)
         klipsub_archv_fname = "%s/kapAnd_%s_klipsub_archive.shelve" % (result_dir, label_str)
 
+        klippsf_cube_hdu = pyfits.PrimaryHDU(klippsf_cube.astype(np.float32))
+        klippsf_cube_hdu.writeto(klippsf_cube_fname, clobber=True)
+        print "Wrote KLIP PSF estimate cube (%.3f Mb) to %s" % (klippsf_cube.nbytes/10.**6, klippsf_cube_fname)
+        mean_klippsf_img_hdu = pyfits.PrimaryHDU(mean_klippsf_img.astype(np.float32))
+        mean_klippsf_img_hdu.writeto(mean_klippsf_img_fname, clobber=True)
+        print "Wrote average of KLIP PSF estimate cube (%.3f Mb) to %s" % (mean_klippsf_img.nbytes/10.**6, mean_klippsf_img_fname)
+        med_klippsf_img_hdu = pyfits.PrimaryHDU(med_klippsf_img.astype(np.float32))
+        med_klippsf_img_hdu.writeto(med_klippsf_img_fname, clobber=True)
+        print "Wrote median of KLIP PSF estimate cube (%.3f Mb) to %s" % (med_klippsf_img.nbytes/10.**6, med_klippsf_img_fname)
         klipsub_cube_hdu = pyfits.PrimaryHDU(klipsub_cube.astype(np.float32))
         klipsub_cube_hdu.writeto(klipsub_cube_fname, clobber=True)
         print "Wrote KLIP-subtracted cube (%.3f Mb) to %s" % (klipsub_cube.nbytes/10.**6, klipsub_cube_fname)

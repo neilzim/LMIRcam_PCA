@@ -457,7 +457,7 @@ if __name__ == "__main__":
     # global PCA search zone config
     #
     track_mode = False
-    mode_cut = [60, 60, 60, 60]
+    mode_cut = [50, 50, 50, 50]
     R_inner = 5.
     R_out = [10, 20, 40, 75.]
     DPhi = [360.]*4

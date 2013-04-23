@@ -13,6 +13,7 @@ from scipy.ndimage.interpolation import *
 from scipy.interpolate import *
 from scipy.ndimage.filters import *
 from scipy.io.idl import readsav
+from multiprocessing import Process, Queue, cpu_count
 import sys
 import os
 import pdb
@@ -279,7 +280,53 @@ def get_ref_and_pix_tables(xycent, fr_shape, N_fr, op_fr, N_rad, R_inner, R_out,
     print ""
     return ref_table, zonemask_table_1d, zonemask_table_2d
 
-def do_klip_subtraction(data_cube, config_dict, result_dict, result_dir, diagnos_stride=40, store_klbasis=False):
+def do_mp_klip_subtraction(N_proc, data_cube, config_dict, result_dict, result_dir, diagnos_stride=40, store_klbasis=False):
+    op_fr = config_dict['op_fr']
+    fr_shape = config_dict['fr_shape']
+    N_op_fr = len(op_fr)
+    klipsub_cube = np.zeros((N_op_fr, fr_shape[0], fr_shape[1]))
+    klippsf_cube = klipsub_cube.copy()
+    derot_klipsub_cube = klipsub_cube.copy()
+    mp_op_fr = list()
+    mp_fr_ind = list()
+    chunk_size = round(float(N_op_fr) / N_proc)
+    for p in range(N_proc):
+        fr_ind_beg = p * chunk_size
+        if p != N_proc - 1:
+            fr_ind_end = fr_ind_beg + chunk_size
+        else:
+            fr_ind_end = N_op_fr
+        mp_op_fr.append(op_fr[fr_ind_beg:fr_ind_end])
+        mp_fr_ind.append( (fr_ind_beg, fr_ind_end) )
+
+    result_queue = Queue()
+    start_time = time.time()
+    for p in range(N_proc):
+        mp_config_dict = config_dict.copy()
+        mp_config_dict['op_fr'] = mp_op_fr[p]
+        task = Process( target = do_klip_subtraction, args = (data_cube, mp_config_dict, result_dict, result_dir,
+                                                              diagnos_stride, store_klbasis, p, result_queue) )
+        task.start()
+
+    bookmark = 0
+    for p in range(N_proc):
+        qget = result_queue.get()
+        p_ret = qget[0]
+        fr_ind_beg = mp_fr_ind[p_ret][0]
+        fr_ind_end = mp_fr_ind[p_ret][1]
+        klipsub_cube[fr_ind_beg:fr_ind_end, :, :] = qget[1]
+        klippsf_cube[fr_ind_beg:fr_ind_end, :, :] = qget[2]
+        derot_klipsub_cube[fr_ind_beg:fr_ind_end, :, :] = qget[3]
+
+    end_time = time.time()
+    exec_time = end_time - start_time
+    time_per_frame = exec_time/N_op_fr
+    print "Took %dm%02ds to KLIP-subtract %d frames (%0.2f s per frame).\n" %\
+          (int(exec_time/60.), exec_time - 60*int(exec_time/60.), N_op_fr, time_per_frame)
+#    print result_dict[-1][2][0]['Z'].shape
+    return klipsub_cube, klippsf_cube, derot_klipsub_cube
+
+def do_klip_subtraction(data_cube, config_dict, result_dict, result_dir, diagnos_stride=40, store_klbasis=False, proc_ind=None, result_queue=None):
     fr_shape = config_dict['fr_shape']
     parang_seq = config_dict['parang_seq']
     N_fr = len(parang_seq)
@@ -297,7 +344,8 @@ def do_klip_subtraction(data_cube, config_dict, result_dict, result_dir, diagnos
     klippsf_cube = klipsub_cube.copy()
     derot_klipsub_cube = klipsub_cube.copy()
 
-    start_time = time.time()
+    if result_queue == None:
+        start_time = time.time()
     for i, fr_ind in enumerate(op_fr):
         # Loop over operand frames
         if fr_ind%diagnos_stride == 0:
@@ -329,8 +377,6 @@ def do_klip_subtraction(data_cube, config_dict, result_dict, result_dir, diagnos
                 Projmat = np.dot(Z.T, Z)
                 I_proj = np.dot(I, Projmat)
                 F = I - I_proj
-                if np.all(np.isreal(F)) == False:
-                    print "do_klip_subtraction: image projection for fr_ind = %d contains complex value" % fr_ind
                 klipsub_cube[i,:,:] += reconst_zone(F, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
                 klippsf_cube[i,:,:] += reconst_zone(I_proj + I_mean, zonemask_table_2d[fr_ind][rad_ind][az_ind], fr_shape)
                 if store_archv:
@@ -346,22 +392,25 @@ def do_klip_subtraction(data_cube, config_dict, result_dict, result_dir, diagnos
                                                                     cube_dim = (N_modes, fr_shape[0], fr_shape[1]))
                     if mean_sub == False:
                         I_mean = 0
-                    print "Frame %d (%d total in data cube), annulus %d/%d, sector %d/%d: RMS before/after sub: %0.2f / %0.2f" %\
-                          (fr_ind+1, N_fr, rad_ind+1, len(op_rad), az_ind+1, len(op_az[rad_ind]),\
+                    print "Frame %d, annulus %d/%d, sector %d/%d: RMS before/after sub: %0.2f / %0.2f" %\
+                          (fr_ind+1, rad_ind+1, len(op_rad), az_ind+1, len(op_az[rad_ind]),\
                            np.sqrt(np.mean((I + I_mean)**2)), np.sqrt(np.mean(F**2)))
         # De-rotate the KLIP-subtracted image
         derot_klipsub_img = rotate(klipsub_cube[i,:,:], -parang_seq[fr_ind], reshape=False)
         derot_klipsub_cube[i,:,:] = derot_klipsub_img
         if fr_ind % diagnos_stride == 0:
-            print "***** Frame %d/%d has been PSF-sub'd and derotated. *****" % (fr_ind+1, N_fr)
+            print "***** Frame %d has been PSF-sub'd and derotated. *****" % (fr_ind+1)
             if store_klbasis == True:
                 klbasis_cube_hdu = pyfits.PrimaryHDU(klbasis_cube.astype(np.float32))
                 klbasis_cube_hdu.writeto("%s/klbasis_fr%03d.fits" % (result_dir, fr_ind), clobber=True)
-    end_time = time.time()
-    exec_time = end_time - start_time
-    time_per_frame = exec_time/N_op_fr
-    print "Took %dm%02ds to KLIP-subtract %d frames (%0.2f s per frame).\n" %\
-          (int(exec_time/60.), exec_time - 60*int(exec_time/60.), N_op_fr, time_per_frame)
+    if result_queue == None:
+        end_time = time.time()
+        exec_time = end_time - start_time
+        time_per_frame = exec_time/N_op_fr
+        print "Took %dm%02ds to KLIP-subtract %d frames (%0.2f s per frame).\n" %\
+              (int(exec_time/60.), exec_time - 60*int(exec_time/60.), N_op_fr, time_per_frame)
+    else:
+        result_queue.put([proc_ind, klipsub_cube, klippsf_cube, derot_klipsub_cube])
     return klipsub_cube, klippsf_cube, derot_klipsub_cube
 
 def get_pca_basis(R, cutoff):
@@ -508,14 +557,13 @@ if __name__ == "__main__":
     #
     # Set additional program parameters
     #
-    store_results = True
-    #store_results = False
+    #store_results = True
+    store_results = False
     #store_archv = True
     store_archv = False
-    diagnos_stride = 50
+    diagnos_stride = 100
     op_fr_L = np.arange(N_fr_L)
     #op_fr_L = np.arange(0, N_fr_L, diagnos_stride)
-    #op_fr_L = np.array([12, 15, 20])
     N_op_fr_L = op_fr_L.shape[0]
     op_rad = range(N_rad)
     op_az = [range(N_az[i]) for i in range(N_rad)]
@@ -539,9 +587,13 @@ if __name__ == "__main__":
                      'ref_table':ref_table_L, 'zonemask_table_1d':zonemask_table_1d_L,
                      'zonemask_table_2d':zonemask_table_2d_L}
     klip_data_L = [[[dict.fromkeys(['I', 'I_mean', 'Z', 'sv', 'Projmat', 'I_proj', 'F']) for a in range(N_az[r])] for r in range(N_rad)] for i in range(N_fr_L)]
-    klipsub_cube_L, klippsf_cube_L, derot_klipsub_cube_L = do_klip_subtraction(data_cube=data_cube_L, config_dict=klip_config_L,
-                                                                               result_dict=klip_data_L, result_dir=result_dir,
-                                                                               diagnos_stride=diagnos_stride, store_klbasis=True)
+    N_proc = cpu_count()
+    klipsub_cube_L, klippsf_cube_L, derot_klipsub_cube_L = do_mp_klip_subtraction(N_proc = 4, data_cube=data_cube_L, config_dict=klip_config_L,
+                                                                                  result_dict=klip_data_L, result_dir=result_dir,
+                                                                                  diagnos_stride=diagnos_stride, store_klbasis=True)
+#    klipsub_cube_L, klippsf_cube_L, derot_klipsub_cube_L = do_klip_subtraction(data_cube=data_cube_L, config_dict=klip_config_L,
+#                                                                               result_dict=klip_data_L, result_dir=result_dir,
+#                                                                               diagnos_stride=diagnos_stride, store_klbasis=False)
     #
     # Coadd the derotated, subtracted images and organize the results
     #
